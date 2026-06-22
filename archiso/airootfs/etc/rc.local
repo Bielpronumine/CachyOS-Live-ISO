@@ -1,18 +1,36 @@
 #!/bin/bash
 
-# 1. Força todos os núcleos da CPU ao limite máximo de performance
-for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
-    echo "performance" > "$cpu"
-done
+# Safe rc.local for LisoOS
+# - Do not run in CI, containers or chroots used by the build/test environment
+# - Check existence and writability of sysfs nodes before touching them
+# - Fail-safe: never return non-zero due to hardware-specific operations
 
-# 2. Desativa a economia de energia do clock da CPU AMD/Intel
-if [ -f /sys/devices/system/cpu/intel_pstate/no_turbo ]; then
-    echo "0" > /sys/devices/system/cpu/intel_pstate/no_turbo
+# Detect CI/container environments and exit early
+if [ -n "$CI" ] || [ -f /.dockerenv ] || [ -f /.containerenv ] || [ -f /.chroot ]; then
+  exit 0
 fi
 
-# 3. Libera o controle de fans e sliders de Overclock para GPUs NVIDIA (Coolbits)
-if command -v nvidia-xconfig &> /dev/null; then
-    nvidia-xconfig --cool-bits=28 --allow-empty-initial-configuration
+# Ensure sysfs CPU path exists
+if [ ! -d /sys/devices/system/cpu ]; then
+  exit 0
+fi
+
+# 1) Set CPU governor to performance only if the sysfs nodes exist and are writable
+for cpu in /sys/devices/system/cpu/cpu[0-9]*; do
+  gov="$cpu/cpufreq/scaling_governor"
+  if [ -w "$gov" ]; then
+    echo performance > "$gov" || true
+  fi
+done
+
+# 2) Disable turbo if the interface exists (Intel)
+if [ -w /sys/devices/system/cpu/intel_pstate/no_turbo ]; then
+  echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo || true
+fi
+
+# 3) NVIDIA Coolbits only if nvidia-xconfig is present
+if command -v nvidia-xconfig >/dev/null 2>&1; then
+  nvidia-xconfig --cool-bits=28 --allow-empty-initial-configuration >/dev/null 2>&1 || true
 fi
 
 exit 0
